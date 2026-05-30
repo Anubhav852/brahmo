@@ -3,51 +3,61 @@ import axios from 'axios';
 
 function Dashboard({ userId }) {
   const [data, setData] = useState(null);
-  const [currentNode, setCurrentNode] = useState("N-03"); // Your entry node
-  const [error, setError] = useState(null);
+  const [currentNode, setCurrentNode] = useState("N-03");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true);
       try {
-        // This calls your FastAPI backend
         const response = await axios.get(`http://127.0.0.1:8000/dashboard/${userId}/${currentNode}`);
         setData(response.data);
       } catch (err) {
-        setError("Could not connect to the Brahmo Backend. Is it running?");
-        console.error(err);
+        console.error("Error fetching Brahmo data:", err);
       }
+      setLoading(false);
     };
     fetchData();
   }, [userId, currentNode]);
 
-  if (error) return <div style={{color: 'red'}}>{error}</div>;
-  if (!data) return <div>Loading Brahmo data...</div>;
+  if (loading) return <div>Pipeline running...</div>;
+  if (!data || data.status !== 'granted') return <div>Access Denied for {userId}</div>;
 
   return (
-    <div style={{ padding: '20px' }}>
-      <h1>Brahmo Dashboard</h1>
-      <h3>Current Node: {currentNode}</h3>
+    <div style={{ border: '2px solid #333', padding: '15px', margin: '10px', width: '45%' }}>
+      <h2>User: {userId}</h2>
+      
+      {/* 1. FILTER FUNNEL (Shows all 5 stages of the pipeline) */}
+      <div style={{ background: '#f4f4f4', padding: '10px', marginBottom: '10px' }}>
+        <h4>Filter Funnel: Pipeline Progress</h4>
+        {data.funnel_stats ? (
+          <ul>
+            <li>Initial BFS Traversal: {data.funnel_stats.initial} nodes</li>
+            <li>After Dept Filter: {data.funnel_stats.after_dept} nodes</li>
+            <li>After Temporal Check: {data.funnel_stats.after_temporal} nodes</li>
+            <li>After Compliance Check: {data.funnel_stats.after_compliance} nodes</li>
+            <li>Final Candidate Set: {data.funnel_stats.final} nodes</li>
+          </ul>
+        ) : <p>Funnel stats unavailable.</p>}
+      </div>
 
-      {data.status === 'granted' ? (
-        <div>
-          <h4>Content:</h4>
-          {data.content.map((item, index) => (
-            <div key={index} style={{ border: '1px solid #ccc', margin: '10px', padding: '10px' }}>
-              <strong>{item.title}</strong>
-              <p>{item.body}</p>
-            </div>
-          ))}
-          
-          <h4>Navigate to sub-nodes:</h4>
-          {data.authorized_nodes.map(nodeId => (
-            <button key={nodeId} onClick={() => setCurrentNode(nodeId)} style={{ margin: '5px' }}>
-              Go to {nodeId}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <p>Access Denied: {data.message}</p>
-      )}
+      {/* 2. DAG VISUALIZATION */}
+      <h4>Knowledge Path (DAG):</h4>
+      <div style={{ fontSize: '0.8em', color: '#666', background: '#eee', padding: '5px' }}>
+        {data.authorized_nodes.join(" → ")}
+      </div>
+
+      <hr />
+
+      {/* 3. CONTENT VIEW */}
+      <h4>Authorized Clinical Content:</h4>
+      {data.content.length > 0 ? (
+        data.content.map((item, idx) => (
+          <div key={idx} style={{ marginBottom: '8px', borderBottom: '1px solid #ddd' }}>
+            <strong>{item.title}</strong>
+          </div>
+        ))
+      ) : <p>No content authorized for this user.</p>}
     </div>
   );
 }

@@ -36,3 +36,7 @@
     transform: rotate(360deg);
   }
 }
+.App { font-family: 'Segoe UI', sans-serif; background-color: #f8fafc; min-height: 100vh; }
+.dashboard-card { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+.node-item { border-left: 4px solid #3b82f6; padding: 10px; margin: 10px 0; background: #eff6ff; }
+.funnel-step { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #eee; }
