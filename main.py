@@ -61,30 +61,36 @@ async def run_pipeline(user_id: str, zone2: bool = True):
 
     entry_level = None
 
-    # For ADMIN: entry point is always the root (L1) node
     if role == "ADMIN":
+        # ADMIN always starts at root (L1)
         for level in sorted(all_levels, key=lambda x: x["level_number"]):
             if level["level_number"] == 1:
                 entry_level = level
                 break
     else:
-        for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
-            if level.get("department") == user_dept and level["level_number"] == user_ceiling:
-                entry_level = level
-                break
+        # Entry point = the level in user's department whose level_number
+        # is CLOSEST to (but not exceeding) the user's ceiling.
+        # This means: find the shallowest level in their dept they can access.
+        # For Priya (VIEWER, L10, ortho) → HL-10-ORTHO-W (L10, ortho)
+        # For Vikram (HOD, L4, ortho)    → HL-05-ORTHO   (L5, ortho) — deepest ortho level <= ceiling
+        # We want the level in their dept with the highest level_number <= ceiling.
 
+        dept_levels = [
+            l for l in all_levels
+            if l.get("department") == user_dept and l["level_number"] <= user_ceiling
+        ]
+
+        if dept_levels:
+            # Pick the one with the highest level_number (deepest in tree) within ceiling
+            entry_level = max(dept_levels, key=lambda x: x["level_number"])
+
+        # Fallback: any level in dept
         if not entry_level:
-            for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
-                if level.get("department") == user_dept and level["level_number"] >= user_ceiling:
-                    entry_level = level
-                    break
+            dept_levels_any = [l for l in all_levels if l.get("department") == user_dept]
+            if dept_levels_any:
+                entry_level = min(dept_levels_any, key=lambda x: x["level_number"])
 
-        if not entry_level:
-            for level in sorted(all_levels, key=lambda x: x["level_number"]):
-                if level.get("department") == user_dept:
-                    entry_level = level
-                    break
-
+        # Final fallback: root
         if not entry_level:
             for level in sorted(all_levels, key=lambda x: x["level_number"]):
                 if level["level_number"] == 1:
@@ -96,12 +102,12 @@ async def run_pipeline(user_id: str, zone2: bool = True):
     # ── 4. BFS Traversal ──────────────────────────────────────
     t = time.perf_counter()
 
-    # BFS runs for ALL roles including ADMIN — starting from root gives correct distances
+    # BFS runs for ALL roles including ADMIN
     reachable_levels = get_reachable_nodes(entry_level_id, db)
     reachable_level_ids = list(reachable_levels.keys())
 
     if role == "ADMIN":
-        # ADMIN fetches all nodes (BFS from root reaches everything)
+        # ADMIN fetches all nodes directly
         nodes_resp = db.table("knowledge_nodes").select("*").execute()
         bfs_nodes = nodes_resp.data or []
     else:
