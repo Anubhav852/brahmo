@@ -1,68 +1,120 @@
-# Brahmo Clinical Pipeline
+# BRAHMO Rules Engine
+## BFS Traversal + 5-Check Filter Pipeline — ZERO LLM
 
-## Project Overview
-Brahmo is a deterministic, rule-based clinical decision support pipeline. It provides a transparent, auditable interface for navigating complex clinical knowledge graphs while enforcing strict multi-stage compliance and access control policies.
+Deterministic Rules Engine Pipeline for secure clinical knowledge retrieval and context filtering. Built using FastAPI, Supabase, React, and PostgreSQL with DAG traversal, hierarchical permission enforcement, BFS-based filtering, and zero LLM involvement.
 
-## System Architecture
-The pipeline utilizes a BFS-based graph traversal followed by a sequential 5-stage filter to ensure clinical safety and data isolation.
+---
 
-```mermaid
-graph TD
-    User[User Context] --> BFS[BFS Traversal: Ancestor Nodes]
-    BFS --> Filter1[1. Department Match]
-    Filter1 --> Filter2[2. Temporal Validity]
-    Filter2 --> Filter3[3. Compliance/MNPI]
-    Filter3 --> Filter4[4. Derivability Check]
-    Filter4 --> Filter5[5. User Constraints]
-    Filter5 --> Authorized[Authorized Content Delivery]
-    
-    style Authorized fill:#d4edda,stroke:#28a745
-    style Filter3 fill:#fff3cd,stroke:#ffc107
+## Quick Start
+
+### Prerequisites
+- Python 3.11+
+- Node.js v18+
+- Supabase account (free tier)
+
+### Backend Setup
+```bash
+git clone https://github.com/Anubhav852/brahmo
+cd brahmo
+python -m venv venv
+venv\Scripts\activate  # Windows
+pip install -r requirements.txt
+cp .env.example .env   # add your Supabase URL and KEY
+uvicorn main:app --reload --port 8000
 ```
-### Key Features
 
-* Deterministic Logic: Guaranteed consistent outputs for clinical safety; zero reliance on non-deterministic LLMs.
+### Database Setup:
 
-* Pipeline Transparency: Real-time "Filter Funnel" visibility allows auditors to track node reduction at every stage.
+1. Create a Supabase project at supabase.com
+2. Go to SQL Editor
+3. Run supabase/schema.sql
+4. Run supabase/seed.sql
+5. Verify: SELECT COUNT(*) FROM knowledge_nodes → 50
+6. Verify: SELECT COUNT(*) FROM users → 7
 
-* Context-Aware Comparison: Side-by-side dashboard views demonstrate deterministic data isolation based on user persona.
+### Frontend Setup
+```bash
+cd brahmo-frontend
+npm install
+npm start
+# Opens at http://localhost:3000
+```
 
-* O(V+E) Efficiency: Optimized graph traversal for high-performance clinical data retrieval.
+---
 
-### Workflow Summary
+## What This Builds
 
-* Request Initiation: The frontend captures userId and entryNode, triggering the API.
+A Rules Engine pipeline that:
+1. Traverses a Directed Acyclic Graph (DAG) of knowledge nodes upward from a user's entry point
+2. Injects globally-relevant Zone 2 nodes (drug safety constraints, hospital-wide policies)
+3. Applies 5 sequential checks to filter down to a candidate set of 15-40 nodes
+4. All deterministically — ZERO LLM involvement
 
-* Graph Mapping: The backend executes a BFS to traverse the Directed Acyclic Graph (DAG) and establish the reachable node set.
+### The Pipeline:
 
-* Sequential Refinement: The candidate set is processed through five distinct validation layers. Each layer prunes nodes that violate clinical or compliance policies.
+User opens session (role: VIEWER, ceiling: L10, dept: Ortho Ward)
+→ Permission Compiler (O(1) lookup for all 15 levels)
+→ Entry Point Resolver (maps dept to DAG leaf node)
+→ BFS Traversal (walks UP the DAG via parent edges)
+→ Zone 2 Injection (global safety nodes added)
+→ 5 Sequential Checks:
+Check 1: Isolation    (org_id match)
+Check 2: Compliance   (MNPI/clearance tags)
+Check 3: Permission   (hierarchy ceiling)
+Check 4: Temporal     (not expired/superseded)
+Check 5: Derivability (score < 0.7)
+→ Candidate Set (annotated nodes with metadata)
 
-* Content Retrieval: Final authorized nodes are used to fetch medical protocols and content.
+### Different Users, Different Results
 
-* Dashboard Visualization: The frontend renders the "Filter Funnel" (audit trail) and "Knowledge Path" (DAG view) to provide total system visibility.
+| User | Role | Ceiling | Final Nodes |
+|------|------|---------|-------------|
+| Nurse Priya | VIEWER | L10 | ~16 |
+| Dr. Vikram | HOD | L4 | ~18 |
+| Admin Suresh | ADMIN | L1 | ~42 |
 
-### Setup
+---
 
-* Clone the repository.
+## Project Structure:
 
-* Create a virtual environment and install dependencies:
+brahmo/
+├── main.py                  # FastAPI app + full pipeline
+├── main_api.py              # API entry point
+├── permission_compiler.py   # O(1) permission hashmap
+├── traversal.py             # BFS + Zone 2 injection
+├── backend/
+│   ├── filters.py           # 5 sequential checks
+│   ├── traversal.py
+│   └── permission_compiler.py
+├── brahmo-frontend/
+│   └── src/App.js           # React dashboard
+├── supabase/
+│   ├── schema.sql           # Database schema
+│   └── seed.sql             # 50 nodes + 7 users
+├── docs/
+│   └── architecture.md      # Deep dive architecture
+├── architecture.md          # Architecture notes
+├── data_sources.md          # Clinical data sources
+├── .env.example             # Environment template
+└── README.md
 
-# Bash
-* pip install -r requirements.txt
-* Create a .env file in the root directory:
+---
 
-# Plaintext
-* SUPABASE_URL=your_url
-* SUPABASE_KEY=your_key
-# Run the API:
+## Demo Scenarios
 
-# Bash
-* uvicorn main_api:app --reload
-# Start the frontend:
+1. **Nurse Priya** — VIEWER, L10, Ortho → 16 nodes (Ortho + global safety only)
+2. **Dr. Vikram** — HOD, L4, Ortho → 18 nodes (sees more dept decisions)
+3. **Admin Suresh** — ADMIN, L1 → 42 nodes (full hospital access)
+4. **Zone 2 Toggle** — Uncheck to remove global drug safety nodes (16 → 8)
+5. **Silent exclusion** — Unauthorized nodes absent, no error messages
 
-# Bash
-* cd brahmo-frontend
-* npm start
-### Documentation
+---
 
-* For a deep dive into the underlying graph theory and filtering logic, please refer to the architecture.md file.
+## Key Design Decisions
+
+- **ZERO LLM** in the pipeline — all filtering is deterministic
+- **Sequential checks** — output of check N is input to check N+1
+- **O(1) permission lookup** — compiled once per session, not per node
+- **Silent exclusion** — unauthorized nodes simply absent, no 403s
+- **Zone 2 injection** — after BFS, before checks, so global nodes still filtered
+
