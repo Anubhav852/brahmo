@@ -47,7 +47,7 @@ async def run_pipeline(user_id: str, zone2: bool = True):
     levels_resp = db.table("hierarchy_levels").select("*").execute()
     all_levels = levels_resp.data or []
 
-    # FIX 1: Get actual total knowledge node count (not hierarchy level count)
+    # Get actual total knowledge node count (not hierarchy level count)
     total_nodes_resp = db.table("knowledge_nodes").select("id", count="exact").execute()
     total_node_count = total_nodes_resp.count or 50
 
@@ -61,41 +61,50 @@ async def run_pipeline(user_id: str, zone2: bool = True):
 
     entry_level = None
 
-    for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
-        if level.get("department") == user_dept and level["level_number"] == user_ceiling:
-            entry_level = level
-            break
-
-    if not entry_level:
-        for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
-            if level.get("department") == user_dept and level["level_number"] >= user_ceiling:
-                entry_level = level
-                break
-
-    if not entry_level:
-        for level in sorted(all_levels, key=lambda x: x["level_number"]):
-            if level.get("department") == user_dept:
-                entry_level = level
-                break
-
-    if not entry_level:
+    # For ADMIN: entry point is always the root (L1) node
+    if role == "ADMIN":
         for level in sorted(all_levels, key=lambda x: x["level_number"]):
             if level["level_number"] == 1:
                 entry_level = level
                 break
+    else:
+        for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
+            if level.get("department") == user_dept and level["level_number"] == user_ceiling:
+                entry_level = level
+                break
+
+        if not entry_level:
+            for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
+                if level.get("department") == user_dept and level["level_number"] >= user_ceiling:
+                    entry_level = level
+                    break
+
+        if not entry_level:
+            for level in sorted(all_levels, key=lambda x: x["level_number"]):
+                if level.get("department") == user_dept:
+                    entry_level = level
+                    break
+
+        if not entry_level:
+            for level in sorted(all_levels, key=lambda x: x["level_number"]):
+                if level["level_number"] == 1:
+                    entry_level = level
+                    break
 
     entry_level_id = entry_level["id"] if entry_level else None
 
     # ── 4. BFS Traversal ──────────────────────────────────────
     t = time.perf_counter()
 
+    # BFS runs for ALL roles including ADMIN — starting from root gives correct distances
+    reachable_levels = get_reachable_nodes(entry_level_id, db)
+    reachable_level_ids = list(reachable_levels.keys())
+
     if role == "ADMIN":
-        reachable_levels = {level["id"]: idx for idx, level in enumerate(all_levels)}
+        # ADMIN fetches all nodes (BFS from root reaches everything)
         nodes_resp = db.table("knowledge_nodes").select("*").execute()
         bfs_nodes = nodes_resp.data or []
     else:
-        reachable_levels = get_reachable_nodes(entry_level_id, db)
-        reachable_level_ids = list(reachable_levels.keys())
         nodes_resp = db.table("knowledge_nodes").select("*")\
             .in_("hierarchy_level_id", reachable_level_ids).execute()
         bfs_nodes = nodes_resp.data or []
@@ -182,7 +191,7 @@ async def run_pipeline(user_id: str, zone2: bool = True):
         "zone2_enabled": zone2,
         "pipeline_timing": timings,
         "funnel": {
-            "total_nodes": total_node_count,  # FIX 1: actual node count, not level count
+            "total_nodes": total_node_count,
             "after_bfs": after_bfs,
             "after_zone2": after_zone2,
             "after_check1": after_check1,
