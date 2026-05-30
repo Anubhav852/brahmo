@@ -75,28 +75,32 @@ Check 5: Derivability (score < 0.7)
 
 ---
 
-## Project Structure:
+## Project Structure
 
+```
 brahmo/
-├── main.py                  # FastAPI app + full pipeline
-├── main_api.py              # API entry point
-├── permission_compiler.py   # O(1) permission hashmap
-├── traversal.py             # BFS + Zone 2 injection
+├── main.py                    # FastAPI app + full pipeline
+├── main_api.py                # API entry point
+├── permission_compiler.py     # O(1) permission hashmap
+├── traversal.py               # BFS + Zone 2 injection
+├── requirements.txt
+├── .env.example
+├── README.md
+├── architecture.md
+├── data_sources.md
 ├── backend/
-│   ├── filters.py           # 5 sequential checks
+│   ├── filters.py             # 5 sequential checks
 │   ├── traversal.py
 │   └── permission_compiler.py
 ├── brahmo-frontend/
-│   └── src/App.js           # React dashboard
+│   └── src/
+│       └── App.js             # React dashboard
 ├── supabase/
-│   ├── schema.sql           # Database schema
-│   └── seed.sql             # 50 nodes + 7 users
-├── docs/
-│   └── architecture.md      # Deep dive architecture
-├── architecture.md          # Architecture notes
-├── data_sources.md          # Clinical data sources
-├── .env.example             # Environment template
-└── README.md
+│   ├── schema.sql             # Database schema
+│   └── seed.sql               # 50 nodes + 7 users
+└── docs/
+    └── architecture.md        # Deep dive architecture
+```
 
 ---
 
