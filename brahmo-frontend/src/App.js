@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import './App.css';
 
 const USERS = [
@@ -42,6 +42,7 @@ function FunnelBar({ label, count, max }) {
 
 export default function App() {
   const [userId, setUserId] = useState('U-PRIYA');
+  const [includeZone2, setIncludeZone2] = useState(true);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -51,7 +52,7 @@ export default function App() {
     setError(null);
     setResult(null);
     try {
-      const resp = await fetch(`http://localhost:8000/pipeline/${uid}`);
+      const resp = await fetch(`http://localhost:8000/pipeline/${uid}?zone2=${includeZone2}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       setResult(data);
@@ -74,7 +75,7 @@ export default function App() {
       <p style={{ color: '#64748b' }}>BFS Traversal + 5-Check Filter Pipeline — ZERO LLM</p>
 
       {/* User Selector */}
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', margin: '24px 0' }}>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', margin: '24px 0 12px' }}>
         <select
           value={userId}
           onChange={handleUserChange}
@@ -96,6 +97,32 @@ export default function App() {
         </button>
       </div>
 
+      {/* Zone 2 Toggle */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '10px',
+        marginBottom: '24px', padding: '10px 14px',
+        background: includeZone2 ? '#f0fdf4' : '#fef2f2',
+        border: `1px solid ${includeZone2 ? '#86efac' : '#fca5a5'}`,
+        borderRadius: '6px'
+      }}>
+        <input
+          type="checkbox"
+          id="zone2toggle"
+          checked={includeZone2}
+          onChange={(e) => setIncludeZone2(e.target.checked)}
+          style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+        />
+        <label htmlFor="zone2toggle" style={{ cursor: 'pointer', fontSize: '14px', fontWeight: '500' }}>
+          Include Zone 2 (Global) nodes — drug safety constraints, hospital-wide policies
+        </label>
+        <span style={{
+          marginLeft: 'auto', fontSize: '12px', fontWeight: 'bold',
+          color: includeZone2 ? '#16a34a' : '#dc2626'
+        }}>
+          {includeZone2 ? 'ON' : 'OFF'}
+        </span>
+      </div>
+
       {error && (
         <div style={{ background: '#fee2e2', color: '#dc2626', padding: '12px', borderRadius: '6px' }}>
           Error: {error}
@@ -114,6 +141,17 @@ export default function App() {
               Entry point: {result.entry_point}
             </div>
           </div>
+
+          {/* Zone 2 warning banner when off */}
+          {!includeZone2 && (
+            <div style={{
+              background: '#fef2f2', border: '1px solid #fca5a5',
+              padding: '10px 14px', borderRadius: '6px', marginBottom: '16px',
+              fontSize: '13px', color: '#dc2626'
+            }}>
+              ⚠️ Zone 2 is OFF — global drug safety constraints and hospital-wide policies are excluded from this session.
+            </div>
+          )}
 
           {/* Filter Funnel */}
           <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>

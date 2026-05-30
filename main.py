@@ -1,5 +1,7 @@
 import os
 import time
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from supabase import create_client
 from backend.traversal import get_reachable_nodes, inject_zone2_nodes
@@ -11,12 +13,23 @@ from backend.filters import (
 
 load_dotenv()
 
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 db = create_client(url, key) if url and key else None
 
 
-def run_pipeline(user_id):
+@app.get("/pipeline/{user_id}")
+async def run_pipeline(user_id: str, zone2: bool = True):
     if db is None:
         return {"status": "error", "message": "Database not initialized"}
 
@@ -43,27 +56,23 @@ def run_pipeline(user_id):
 
     entry_level = None
 
-    # First: exact match on department AND ceiling level number
     for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
         if level.get("department") == user_dept and level["level_number"] == user_ceiling:
             entry_level = level
             break
 
-    # Second: closest level at or above ceiling in same department
     if not entry_level:
         for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
             if level.get("department") == user_dept and level["level_number"] >= user_ceiling:
                 entry_level = level
                 break
 
-    # Third: any level in same department
     if not entry_level:
         for level in sorted(all_levels, key=lambda x: x["level_number"]):
             if level.get("department") == user_dept:
                 entry_level = level
                 break
 
-    # Final fallback: root node (for ADMIN or unmatched departments)
     if not entry_level:
         for level in sorted(all_levels, key=lambda x: x["level_number"]):
             if level["level_number"] == 1:
@@ -72,11 +81,10 @@ def run_pipeline(user_id):
 
     entry_level_id = entry_level["id"] if entry_level else None
 
-    # ── 4. BFS Traversal (upward through DAG) ─────────────────
+    # ── 4. BFS Traversal ──────────────────────────────────────
     t = time.perf_counter()
 
     if role == "ADMIN":
-        # ADMIN starts at root — fetch all levels and all nodes directly
         reachable_levels = {level["id"]: idx for idx, level in enumerate(all_levels)}
         nodes_resp = db.table("knowledge_nodes").select("*").execute()
         bfs_nodes = nodes_resp.data or []
@@ -90,14 +98,15 @@ def run_pipeline(user_id):
     timings["bfs_ms"] = round((time.perf_counter() - t) * 1000, 2)
     after_bfs = len(bfs_nodes)
 
-    # ── 5. Zone 2 Injection (after BFS, before checks) ────────
+    # ── 5. Zone 2 Injection (conditional) ─────────────────────
     t = time.perf_counter()
-    zone2_nodes = inject_zone2_nodes(db)
-    bfs_ids = {n["id"] for n in bfs_nodes}
-    for n in zone2_nodes:
-        if n["id"] not in bfs_ids:
-            bfs_nodes.append(n)
-            bfs_ids.add(n["id"])
+    if zone2:
+        zone2_nodes = inject_zone2_nodes(db)
+        bfs_ids = {n["id"] for n in bfs_nodes}
+        for n in zone2_nodes:
+            if n["id"] not in bfs_ids:
+                bfs_nodes.append(n)
+                bfs_ids.add(n["id"])
     after_zone2 = len(bfs_nodes)
     timings["zone2_inject_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
@@ -105,31 +114,26 @@ def run_pipeline(user_id):
     org_id = user.get("org_id", "supra")
     user_clearance = user.get("compliance_clearance") or []
 
-    # Check 1: Isolation
     t = time.perf_counter()
     pool = [n for n in bfs_nodes if check_isolation(n, org_id)]
     after_check1 = len(pool)
     timings["check1_isolation_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
-    # Check 2: Compliance
     t = time.perf_counter()
     pool = [n for n in pool if check_compliance(n, user_clearance)]
     after_check2 = len(pool)
     timings["check2_compliance_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
-    # Check 3: Permission
     t = time.perf_counter()
     pool = [n for n in pool if check_permission(n, permission_map)]
     after_check3 = len(pool)
     timings["check3_permission_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
-    # Check 4: Temporal
     t = time.perf_counter()
     pool = [n for n in pool if check_temporal(n)]
     after_check4 = len(pool)
     timings["check4_temporal_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
-    # Check 5: Derivability
     t = time.perf_counter()
     pool = [n for n in pool if check_derivability(n)]
     after_check5 = len(pool)
@@ -162,7 +166,6 @@ def run_pipeline(user_id):
             "compression_hint": compression_hint,
         })
 
-    # Sort by importance descending
     candidate_set.sort(key=lambda x: x.get("importance") or 0, reverse=True)
 
     return {
@@ -171,6 +174,7 @@ def run_pipeline(user_id):
         "role": role,
         "ceiling_level": user_ceiling,
         "entry_point": entry_level_id,
+        "zone2_enabled": zone2,
         "pipeline_timing": timings,
         "funnel": {
             "total_nodes": len(all_levels),
