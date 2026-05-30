@@ -5,4 +5,5 @@ __pycache__/
 node_modules/
 brahmo-frontend/node_modules/
 brahmo-frontend/build/
+.next/
 brahmo-frontend/dist/
