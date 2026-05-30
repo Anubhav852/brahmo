@@ -13,7 +13,11 @@ def check_compliance(node, user_compliance_clearance):
     return True
 
 def check_permission(node, permission_map):
-    """Check 3: Node's hierarchy level must be >= user's ceiling level"""
+    """Check 3: Node's hierarchy level must be within user's ceiling.
+    Zone 2 (GLOBAL) nodes always pass — they were explicitly injected for all users."""
+    # Zone 2 nodes bypass permission check
+    if node.get("zone") == 2:
+        return True
     level_id = node.get("hierarchy_level_id")
     return permission_map.get(level_id, False)
 

@@ -1,6 +1,5 @@
 import os
 import time
-from collections import deque
 from dotenv import load_dotenv
 from supabase import create_client
 from backend.traversal import get_reachable_nodes, inject_zone2_nodes
@@ -40,16 +39,33 @@ def run_pipeline(user_id):
     # ── 3. Entry Point Resolver ────────────────────────────────
     user_dept = user.get("department")
     user_ceiling = user.get("ceiling_level", 15)
+    role = user.get("role")
 
-    # Find the deepest hierarchy level matching user's department and ceiling
     entry_level = None
+
+    # First: exact match on department AND ceiling level number
     for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
-        if level.get("department") == user_dept and level["level_number"] >= user_ceiling:
+        if level.get("department") == user_dept and level["level_number"] == user_ceiling:
             entry_level = level
             break
-    # Fallback: for ADMIN, start at root
+
+    # Second: closest level at or above ceiling in same department
     if not entry_level:
-        for level in all_levels:
+        for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
+            if level.get("department") == user_dept and level["level_number"] >= user_ceiling:
+                entry_level = level
+                break
+
+    # Third: any level in same department
+    if not entry_level:
+        for level in sorted(all_levels, key=lambda x: x["level_number"]):
+            if level.get("department") == user_dept:
+                entry_level = level
+                break
+
+    # Final fallback: root node (for ADMIN or unmatched departments)
+    if not entry_level:
+        for level in sorted(all_levels, key=lambda x: x["level_number"]):
             if level["level_number"] == 1:
                 entry_level = level
                 break
@@ -58,21 +74,25 @@ def run_pipeline(user_id):
 
     # ── 4. BFS Traversal (upward through DAG) ─────────────────
     t = time.perf_counter()
-    reachable_levels = get_reachable_nodes(entry_level_id, db)
-    # reachable_levels = {level_id: distance}
-    timings["bfs_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
-    # Fetch all nodes whose hierarchy_level_id is in reachable levels
-    reachable_level_ids = list(reachable_levels.keys())
-    nodes_resp = db.table("knowledge_nodes").select("*")\
-        .in_("hierarchy_level_id", reachable_level_ids).execute()
-    bfs_nodes = nodes_resp.data or []
+    if role == "ADMIN":
+        # ADMIN starts at root — fetch all levels and all nodes directly
+        reachable_levels = {level["id"]: idx for idx, level in enumerate(all_levels)}
+        nodes_resp = db.table("knowledge_nodes").select("*").execute()
+        bfs_nodes = nodes_resp.data or []
+    else:
+        reachable_levels = get_reachable_nodes(entry_level_id, db)
+        reachable_level_ids = list(reachable_levels.keys())
+        nodes_resp = db.table("knowledge_nodes").select("*")\
+            .in_("hierarchy_level_id", reachable_level_ids).execute()
+        bfs_nodes = nodes_resp.data or []
+
+    timings["bfs_ms"] = round((time.perf_counter() - t) * 1000, 2)
     after_bfs = len(bfs_nodes)
 
     # ── 5. Zone 2 Injection (after BFS, before checks) ────────
     t = time.perf_counter()
     zone2_nodes = inject_zone2_nodes(db)
-    # Merge, avoiding duplicates
     bfs_ids = {n["id"] for n in bfs_nodes}
     for n in zone2_nodes:
         if n["id"] not in bfs_ids:
@@ -148,7 +168,7 @@ def run_pipeline(user_id):
     return {
         "user": user_id,
         "user_name": user.get("name"),
-        "role": user.get("role"),
+        "role": role,
         "ceiling_level": user_ceiling,
         "entry_point": entry_level_id,
         "pipeline_timing": timings,
