@@ -1,72 +1,166 @@
 import os
 import time
+from collections import deque
 from dotenv import load_dotenv
 from supabase import create_client
-from backend.traversal import get_reachable_nodes, get_children_of_node
-from backend.permission_compiler import compile_user_permissions # Updated import
-from backend.data_manager import get_content_for_nodes
-from backend.logger import log_access
+from backend.traversal import get_reachable_nodes, inject_zone2_nodes
+from backend.permission_compiler import compile_permissions
 from backend.filters import (
-    check_dept_match, check_temporal_validity, 
-    check_compliance, is_highly_derivable, check_user_constraints
+    check_isolation, check_compliance,
+    check_permission, check_temporal, check_derivability
 )
 
 load_dotenv()
 
-db = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
+url = os.environ.get("SUPABASE_URL")
+key = os.environ.get("SUPABASE_KEY")
+db = create_client(url, key) if url and key else None
 
-def process_dashboard_request(user_id, entry_node):
-    start_time = time.perf_counter()
 
-    # 1. O(1) Permission Compilation (Run once!)
-    # This hashmap {node_id: access_level} allows O(1) checks for all subsequent filters
-    permission_map = compile_user_permissions(user_id, db)
-    
-    if not permission_map:
-        log_access(user_id, entry_node, "READ_DENIED", db)
-        return {"status": "denied", "message": "No permissions found for user."}
+def run_pipeline(user_id):
+    if db is None:
+        return {"status": "error", "message": "Database not initialized"}
 
-    # 2. BFS Traversal
-    initial_nodes = get_reachable_nodes(entry_node, db)
-    
-    # 3. Sequential 5-Check Filter Pipeline
-    # We pass the permission_map into relevant filters instead of querying DB
-    current_pool = initial_nodes
-    stats = {"initial": len(initial_nodes)}
+    timings = {}
+    total_start = time.perf_counter()
 
-    # Step 1: Dept Isolation
-    current_pool = [n for n in current_pool if check_dept_match(user_id, n, db)]
-    stats["after_dept"] = len(current_pool)
+    # ── 1. Fetch user ──────────────────────────────────────────
+    user_resp = db.table("users").select("*").eq("id", user_id).single().execute()
+    if not user_resp.data:
+        return {"status": "error", "message": f"User {user_id} not found"}
+    user = user_resp.data
 
-    # Step 2: Compliance/MNPI (Using the compiled map for O(1) check)
-    current_pool = [n for n in current_pool if n in permission_map]
-    stats["after_compliance"] = len(current_pool)
-    
-    # Step 3: Temporal Validity
-    current_pool = [n for n in current_pool if check_temporal_validity(n, db)]
-    stats["after_temporal"] = len(current_pool)
-    
-    # Step 4: Derivability
-    current_pool = [n for n in current_pool if not is_highly_derivable(n, db)]
-    stats["after_derivability"] = len(current_pool)
-    
-    # Step 5: User Constraints
-    current_pool = [n for n in current_pool if check_user_constraints(user_id, n, db)]
-    stats["final"] = len(current_pool)
+    # ── 2. Permission Compiler (runs ONCE, O(1) lookup) ────────
+    t = time.perf_counter()
+    levels_resp = db.table("hierarchy_levels").select("*").execute()
+    all_levels = levels_resp.data or []
+    permission_map = compile_permissions(user, all_levels)
+    timings["permission_compile_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
-    duration = (time.perf_counter() - start_time) * 1000
+    # ── 3. Entry Point Resolver ────────────────────────────────
+    user_dept = user.get("department")
+    user_ceiling = user.get("ceiling_level", 15)
 
-    # 4. Final Content Fetch
-    content = get_content_for_nodes(current_pool, db)
-    children = get_children_of_node(entry_node, db)
+    # Find the deepest hierarchy level matching user's department and ceiling
+    entry_level = None
+    for level in sorted(all_levels, key=lambda x: x["level_number"], reverse=True):
+        if level.get("department") == user_dept and level["level_number"] >= user_ceiling:
+            entry_level = level
+            break
+    # Fallback: for ADMIN, start at root
+    if not entry_level:
+        for level in all_levels:
+            if level["level_number"] == 1:
+                entry_level = level
+                break
 
-    log_access(user_id, entry_node, "READ_SUCCESS", db)
+    entry_level_id = entry_level["id"] if entry_level else None
+
+    # ── 4. BFS Traversal (upward through DAG) ─────────────────
+    t = time.perf_counter()
+    reachable_levels = get_reachable_nodes(entry_level_id, db)
+    # reachable_levels = {level_id: distance}
+    timings["bfs_ms"] = round((time.perf_counter() - t) * 1000, 2)
+
+    # Fetch all nodes whose hierarchy_level_id is in reachable levels
+    reachable_level_ids = list(reachable_levels.keys())
+    nodes_resp = db.table("knowledge_nodes").select("*")\
+        .in_("hierarchy_level_id", reachable_level_ids).execute()
+    bfs_nodes = nodes_resp.data or []
+    after_bfs = len(bfs_nodes)
+
+    # ── 5. Zone 2 Injection (after BFS, before checks) ────────
+    t = time.perf_counter()
+    zone2_nodes = inject_zone2_nodes(db)
+    # Merge, avoiding duplicates
+    bfs_ids = {n["id"] for n in bfs_nodes}
+    for n in zone2_nodes:
+        if n["id"] not in bfs_ids:
+            bfs_nodes.append(n)
+            bfs_ids.add(n["id"])
+    after_zone2 = len(bfs_nodes)
+    timings["zone2_inject_ms"] = round((time.perf_counter() - t) * 1000, 2)
+
+    # ── 6. Five Sequential Checks ──────────────────────────────
+    org_id = user.get("org_id", "supra")
+    user_clearance = user.get("compliance_clearance") or []
+
+    # Check 1: Isolation
+    t = time.perf_counter()
+    pool = [n for n in bfs_nodes if check_isolation(n, org_id)]
+    after_check1 = len(pool)
+    timings["check1_isolation_ms"] = round((time.perf_counter() - t) * 1000, 2)
+
+    # Check 2: Compliance
+    t = time.perf_counter()
+    pool = [n for n in pool if check_compliance(n, user_clearance)]
+    after_check2 = len(pool)
+    timings["check2_compliance_ms"] = round((time.perf_counter() - t) * 1000, 2)
+
+    # Check 3: Permission
+    t = time.perf_counter()
+    pool = [n for n in pool if check_permission(n, permission_map)]
+    after_check3 = len(pool)
+    timings["check3_permission_ms"] = round((time.perf_counter() - t) * 1000, 2)
+
+    # Check 4: Temporal
+    t = time.perf_counter()
+    pool = [n for n in pool if check_temporal(n)]
+    after_check4 = len(pool)
+    timings["check4_temporal_ms"] = round((time.perf_counter() - t) * 1000, 2)
+
+    # Check 5: Derivability
+    t = time.perf_counter()
+    pool = [n for n in pool if check_derivability(n)]
+    after_check5 = len(pool)
+    timings["check5_derivability_ms"] = round((time.perf_counter() - t) * 1000, 2)
+
+    timings["total_ms"] = round((time.perf_counter() - total_start) * 1000, 2)
+
+    # ── 7. Candidate Set Assembly ──────────────────────────────
+    candidate_set = []
+    for node in pool:
+        level_id = node.get("hierarchy_level_id")
+        distance = reachable_levels.get(level_id, 99)
+        if distance <= 1:
+            compression_hint = "FULL"
+        elif distance == 2:
+            compression_hint = "COMPRESSED"
+        else:
+            compression_hint = "CONSTRAINT_ONLY"
+
+        candidate_set.append({
+            "id": node["id"],
+            "type": node.get("type"),
+            "title": node.get("title"),
+            "content": node.get("content"),
+            "importance": node.get("importance"),
+            "zone": node.get("zone"),
+            "hierarchy_level_id": level_id,
+            "department": node.get("department"),
+            "distance_from_entry": distance,
+            "compression_hint": compression_hint,
+        })
+
+    # Sort by importance descending
+    candidate_set.sort(key=lambda x: x.get("importance") or 0, reverse=True)
 
     return {
-        "status": "granted",
-        "funnel_stats": stats,
-        "pipeline_ms": round(duration, 2),
-        "content": content,
-        "authorized_nodes": children,
-        "current_node": entry_node
+        "user": user_id,
+        "user_name": user.get("name"),
+        "role": user.get("role"),
+        "ceiling_level": user_ceiling,
+        "entry_point": entry_level_id,
+        "pipeline_timing": timings,
+        "funnel": {
+            "total_nodes": len(all_levels),
+            "after_bfs": after_bfs,
+            "after_zone2": after_zone2,
+            "after_check1": after_check1,
+            "after_check2": after_check2,
+            "after_check3": after_check3,
+            "after_check4": after_check4,
+            "after_check5": after_check5,
+        },
+        "candidate_set": candidate_set,
     }

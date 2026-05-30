@@ -1,38 +1,34 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-def check_dept_match(user_id, node_id, db):
-    # Fetch user's department
-    user = db.table("users").select("department").eq("id", user_id).single().execute()
-    # Fetch node's department
-    node = db.table("nodes").select("department").eq("id", node_id).single().execute()
-    
-    return user.data["department"] == node.data["department"]
+def check_isolation(node, org_id):
+    """Check 1: Node must belong to same org"""
+    return node.get("org_id") == org_id
 
-def check_temporal_validity(node_id, db):
-    # Fetch node expiry date
-    node = db.table("nodes").select("expiry_date").eq("id", node_id).single().execute()
-    expiry_date = node.data["expiry_date"] # Expecting ISO format string
-    
-    return datetime.fromisoformat(expiry_date) > datetime.now()
-
-def check_compliance(user_id, node_id, db):
-    # Fetch user clearance and node MNPI status
-    user = db.table("users").select("clearance_level").eq("id", user_id).single().execute()
-    node = db.table("nodes").select("is_mnpi").eq("id", node_id).single().execute()
-    
-    # If node is MNPI, user clearance must be 'high'
-    if node.data["is_mnpi"]:
-        return user.data["clearance_level"] == "high"
+def check_compliance(node, user_compliance_clearance):
+    """Check 2: MNPI-tagged nodes excluded if user has no clearance"""
+    node_tags = node.get("compliance_tags") or []
+    for tag in node_tags:
+        if tag not in user_compliance_clearance:
+            return False
     return True
 
-def is_highly_derivable(node_id, db):
-    # Check if node is marked as general knowledge (too basic/derivable)
-    node = db.table("nodes").select("category").eq("id", node_id).single().execute()
-    return node.data["category"] == "general_knowledge"
+def check_permission(node, permission_map):
+    """Check 3: Node's hierarchy level must be >= user's ceiling level"""
+    level_id = node.get("hierarchy_level_id")
+    return permission_map.get(level_id, False)
 
-def check_user_constraints(user_id, node_id, db):
-    # Custom rule: Check if node is on user's specific blocklist
-    blocklist = db.table("user_constraints").select("blocked_node_id").eq("user_id", user_id).execute()
-    blocked_ids = [row["blocked_node_id"] for row in blocklist.data]
-    
-    return node_id not in blocked_ids
+def check_temporal(node):
+    """Check 4: Exclude superseded and expired nodes"""
+    if node.get("status") == "SUPERSEDED":
+        return False
+    valid_until = node.get("valid_until")
+    if valid_until:
+        expiry = datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
+        if expiry < datetime.now(timezone.utc):
+            return False
+    return True
+
+def check_derivability(node):
+    """Check 5: Exclude nodes with derivability_score >= 0.7"""
+    score = node.get("derivability_score", 0)
+    return float(score) < 0.7
