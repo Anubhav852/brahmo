@@ -1,20 +1,29 @@
-# backend/permission_compiler.py
+def compile_permissions(user_id, node_id, supabase_client):
+    """
+    Checks user permissions for a specific node.
+    """
+    try:
+        # 1. Fetch the node to verify it exists
+        # NOTE: Updated to table 'nodes' to match your schema
+        response = supabase_client.table('nodes')\
+            .select('id')\
+            .eq('id', node_id)\
+            .execute()
+        
+        if not response.data:
+            return False, f"Error: Node {node_id} does not exist in the 'nodes' table."
 
-def compile_permissions(user_id, node_id, db):
-    """
-    Checks if a user is permitted to access a specific node
-    based on their ceiling level and compliance clearance.
-    """
-    # 1. Fetch user details
-    user = db.table('users').select('*').eq('id', user_id).single().execute().data
-    
-    # 2. Fetch the node's hierarchy level
-    node = db.table('knowledge_nodes').select('hierarchy_level_id').eq('id', node_id).single().execute().data
-    level_info = db.table('hierarchy_levels').select('level_number').eq('id', node['hierarchy_level_id']).single().execute().data
-    
-    # 3. Check access logic
-    # Rule: If user's ceiling_level >= node's level_number, access is granted
-    if user['ceiling_level'] >= level_info['level_number']:
-        return True, "Access Granted"
-    
-    return False, "Access Denied: Insufficient Clearance"
+        # 2. Check if the user has an explicit permission record
+        perm_response = supabase_client.table('user_permissions')\
+            .select('access_level')\
+            .eq('user_id', user_id)\
+            .eq('node_id', node_id)\
+            .execute()
+
+        if not perm_response.data:
+            return False, f"Access Denied: No permission record found for user {user_id} on {node_id}."
+
+        return True, "Access Granted."
+
+    except Exception as e:
+        return False, f"Database Error: {str(e)}"
