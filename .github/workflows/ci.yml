@@ -17,5 +17,5 @@ jobs:
     - name: Lint with flake8
       run: |
         pip install flake8
-        # Exclude the venv directory from the scan
-        flake8 . --count --select=E9,F63,F7,F82 --exclude=venv --show-source --statistics
+        # Exclude frontend and virtual environment folders
+        flake8 . --count --select=E9,F63,F7,F82 --exclude=venv,node_modules,brahmo-frontend --show-source --statistics

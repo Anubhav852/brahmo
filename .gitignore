@@ -3,3 +3,6 @@ __pycache__/
 .env
 .DS_Store
 node_modules/
+brahmo-frontend/node_modules/
+brahmo-frontend/build/
+brahmo-frontend/dist/

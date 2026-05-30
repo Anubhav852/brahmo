@@ -1,23 +1,20 @@
 from fastapi import FastAPI
-from backend.traversal import get_reachable_nodes
-from backend.data_manager import get_content_for_nodes
-from backend.permission_compiler import compile_permissions
-from backend.db_config import db
+from fastapi.middleware.cors import CORSMiddleware
+from main import process_dashboard_request  # Importing the unified logic
 
 app = FastAPI()
 
+# Enable CORS: This allows your React app (localhost:3000) 
+# to communicate with your FastAPI backend (localhost:8000)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/dashboard/{user_id}/{node_id}")
 async def get_dashboard(user_id: str, node_id: str):
-    # Reuse your existing logic!
-    allowed, message = compile_permissions(user_id, node_id, db)
-    if not allowed:
-        return {"status": "denied", "message": message}
-    
-    reachable = get_reachable_nodes(node_id, db)
-    content = get_content_for_nodes(reachable, db)
-    
-    return {
-        "status": "granted",
-        "authorized_nodes": reachable,
-        "content": content
-    }
+    # Now this endpoint is just a thin wrapper around your core logic
+    return process_dashboard_request(user_id, node_id)
