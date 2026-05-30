@@ -46,6 +46,11 @@ async def run_pipeline(user_id: str, zone2: bool = True):
     t = time.perf_counter()
     levels_resp = db.table("hierarchy_levels").select("*").execute()
     all_levels = levels_resp.data or []
+
+    # FIX 1: Get actual total knowledge node count (not hierarchy level count)
+    total_nodes_resp = db.table("knowledge_nodes").select("id", count="exact").execute()
+    total_node_count = total_nodes_resp.count or 50
+
     permission_map = compile_permissions(user, all_levels)
     timings["permission_compile_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
@@ -177,7 +182,7 @@ async def run_pipeline(user_id: str, zone2: bool = True):
         "zone2_enabled": zone2,
         "pipeline_timing": timings,
         "funnel": {
-            "total_nodes": len(all_levels),
+            "total_nodes": total_node_count,  # FIX 1: actual node count, not level count
             "after_bfs": after_bfs,
             "after_zone2": after_zone2,
             "after_check1": after_check1,
