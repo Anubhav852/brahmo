@@ -47,20 +47,20 @@ graph TD
 
 * Create a virtual environment and install dependencies:
 
-* Bash
+# Bash
 * pip install -r requirements.txt
 * Create a .env file in the root directory:
 
-* Plaintext
+# Plaintext
 * SUPABASE_URL=your_url
 * SUPABASE_KEY=your_key
-* Run the API:
+# Run the API:
 
-* Bash
+# Bash
 * uvicorn main_api:app --reload
-* Start the frontend:
+# Start the frontend:
 
-* Bash
+# Bash
 * cd brahmo-frontend
 * npm start
 ### Documentation
