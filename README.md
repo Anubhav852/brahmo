@@ -15,7 +15,6 @@ Deterministic Rules Engine Pipeline for secure clinical knowledge retrieval and 
 ### Backend Setup
 ```bash
 git clone https://github.com/Anubhav852/brahmo
-cd brahmo
 python -m venv venv
 venv\Scripts\activate        # Windows
 # source venv/bin/activate   # Mac/Linux
@@ -34,7 +33,7 @@ uvicorn main:app --reload --port 8000
 
 ### Frontend Setup
 ```bash
-cd frontend
+cd brahmo-frontend
 npm install
 npm start
 # Opens at http://localhost:3000
